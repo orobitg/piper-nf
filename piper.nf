@@ -330,14 +330,46 @@ fastaToAlign = merge('prepare_mfa') {
     """
 }
 
+
+fastaToAlign1 = channel()
+fastaToAlign2 = channel()
+splitter ( fastaToAlign, [fastaToAlign2, fastaToAlign1] )
+
 alignment = task('align') {
-    input fastaToAlign
+    input fastaToAlign1
     output '*.aln'
 
     """
-    t_coffee -in $fastaToAlign -method ${params.alignMethod} -n_core 1
+    t_coffee -in $fastaToAlign1 -method ${params.alignMethod} -n_core 1
     """
 }
+
+rna_aln = channel()
+stk_aln = channel()
+html_aln = channel()
+
+task('align_rna') {
+    input fastaToAlign2
+    output '*.aln': rna_aln
+    output '*.stk': stk_aln
+    output '*.comp.html': html_aln
+    """
+    fileName=\$(basename "${fastaToAlign2}")
+    baseName="\${fileName%.*}"
+
+    #R-Coffee Aligngment
+    t_coffee -seq $fastaToAlign2 -mode rcoffee -n_core 1 
+
+    #Alignment in Stockholm format
+    t_coffee -other_pg seq_reformat -in \$baseName.aln -action +add_alifold -output stockholm_aln -out \$baseName.stk
+
+    #Estimate compensated mutations 
+    t_coffee -other_pg seq_reformat -in \$baseName.aln -action +alifold2analyze color_html > \$baseName.comp.html
+
+    """
+}
+
+
 
 similarity = merge('similarity') {
     input alignment
