@@ -307,6 +307,27 @@ task ('exonerate') {
     """
 }
 
+resultDir = file(params.resultDir)
+aln = params.resultDir + '/aln'
+aln_tc = aln + '/tcoffee'
+aln_rc = aln + '/rcoffee'
+alnDir = file(aln)
+alnTcDir = file(aln_tc)
+alnRcDir = file(aln_rc)
+
+resultDir.with {
+    if( !isNotEmpty() ) { mkdirs() }    
+}
+alnDir.with {
+    if( !isNotEmpty() ) { mkdirs() }    
+}
+alnTcDir.with {
+    if( !isNotEmpty() ) { mkdirs() }    
+}
+alnRcDir.with {
+    if( !isNotEmpty() ) { mkdirs() }    
+}
+
 
 fastaToMerge = channel()
 exonerateOut.filter { file -> file.baseName in allQueryIDs  } .into (fastaToMerge)
@@ -335,12 +356,21 @@ fastaToAlign1 = channel()
 fastaToAlign2 = channel()
 splitter ( fastaToAlign, [fastaToAlign2, fastaToAlign1] )
 
-alignment = task('align') {
-    input fastaToAlign1
-    output '*.aln'
+alignment = channel()
+html_alignment = channel()
 
+task('align') {
+    input fastaToAlign1
+    input alnTcDir
+    output '*.aln': alignment
+    output '*.html': html_alignment
+	
     """
     t_coffee -in $fastaToAlign1 -method ${params.alignMethod} -n_core 1
+
+    cp *.aln $alnTcDir
+    cp *.html $alnTcDir
+
     """
 }
 
@@ -350,6 +380,7 @@ html_aln = channel()
 
 task('align_rna') {
     input fastaToAlign2
+    input alnRcDir
     output '*.aln': rna_aln
     output '*.stk': stk_aln
     output '*.comp.html': html_aln
@@ -366,6 +397,10 @@ task('align_rna') {
     #Estimate compensated mutations 
     t_coffee -other_pg seq_reformat -in \$baseName.aln -action +alifold2analyze color_html > \$baseName.comp.html
 
+    cp *.aln $alnRcDir
+    cp *.html $alnRcDir
+    cp *.stk $alnRcDir
+
     """
 }
 
@@ -380,15 +415,20 @@ similarity = merge('similarity') {
     """
 }
 
+similarity_rna = merge('rna_similarity') {
+    input rna_aln
+    output '*'
+
+    """
+    t_coffee -other_pg seq_reformat -in $rna_aln -output sim > ${rna_aln.baseName}
+    """
+}
+
 /*
  * Copy the GFT files produces by the Exonerate steps into the result (current) folder
  */
 
-resultDir = file(params.resultDir)
-resultDir.with {
-    if( isNotEmpty() ) { deleteDir() }
-    mkdirs()
-}
+
 
 exonerateGtf.each { file ->
     if( file.size() == 0 ) return
@@ -396,6 +436,7 @@ exonerateGtf.each { file ->
     def gtfFileName = new File(resultDir, name)
     gtfFileName << file.text
 }
+
 
 simFolder = val()
 similarity.whenBound { file -> if(file instanceof File) simFolder << file.parent }
@@ -415,8 +456,23 @@ task ('matrix') {
     """
 }
 
-simMatrixFile = simMatrix.val
-simMatrixFile.copyTo( new File(resultDir,'simMatrix.csv') )
+simFolder_rna = val()
+similarity_rna.whenBound { file -> if(file instanceof File) simFolder_rna << file.parent }
+
+task ('rna_matrix') {
+    echo true
+    input simFolder_rna
+    output simMatrix_rna
+
+    """
+    echo '\n====== Pipe-R sim matrix ======='
+    sim2matrix.pl -query $queryFile -data_dir $simFolder_rna -genomes_dir $dbPath | tee simMatrix_rna
+    echo '\n'
+    """
+}
+
+simMatrixFile_rna = simMatrix_rna.val
+simMatrixFile_rna.copyTo( new File(resultDir,'simMatrix_rna.csv') )
 
 
 // ----==== utility methods ====----
